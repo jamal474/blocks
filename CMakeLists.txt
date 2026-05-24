@@ -98,3 +98,12 @@ if(WIN32)
         message(WARNING "Could not generate Windows icon from background.png")
     endif()
 endif()
+
+if(APPLE)
+    add_custom_command(
+        TARGET blocks POST_BUILD
+        COMMAND codesign --force --deep -s - "$<TARGET_FILE:blocks>"
+        COMMENT "Ad-hoc code signing the executable for Gatekeeper"
+    )
+endif()
+

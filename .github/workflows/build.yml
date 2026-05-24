@@ -106,25 +106,32 @@ jobs:
           cp "build/Release/${{ matrix.artifact_name }}" "${APP_DIR}/Contents/MacOS/"
           chmod +x "${APP_DIR}/Contents/MacOS/${{ matrix.artifact_name }}"
 
-          # 3. Generate .icns from background.png using macOS-native tools
+          # 3. Generate .icns from background.png (cropped & zoomed to building)
           ICONSET_DIR="$(mktemp -d)/blocks.iconset"
           mkdir -p "${ICONSET_DIR}"
 
-          sips -z   16   16 textures/background.png --out "${ICONSET_DIR}/icon_16x16.png"
-          sips -z   32   32 textures/background.png --out "${ICONSET_DIR}/icon_16x16@2x.png"
-          sips -z   32   32 textures/background.png --out "${ICONSET_DIR}/icon_32x32.png"
-          sips -z   64   64 textures/background.png --out "${ICONSET_DIR}/icon_32x32@2x.png"
-          sips -z  128  128 textures/background.png --out "${ICONSET_DIR}/icon_128x128.png"
-          sips -z  256  256 textures/background.png --out "${ICONSET_DIR}/icon_128x128@2x.png"
-          sips -z  256  256 textures/background.png --out "${ICONSET_DIR}/icon_256x256.png"
-          sips -z  512  512 textures/background.png --out "${ICONSET_DIR}/icon_256x256@2x.png"
-          sips -z  512  512 textures/background.png --out "${ICONSET_DIR}/icon_512x512.png"
-          sips -z 1024 1024 textures/background.png --out "${ICONSET_DIR}/icon_512x512@2x.png"
+          # Crop to a square centered on the building (70% width, biased upward)
+          W=$(sips -g pixelWidth textures/background.png | tail -1 | awk '{print $2}')
+          H=$(sips -g pixelHeight textures/background.png | tail -1 | awk '{print $2}')
+          CROP_SIZE=$(( W * 70 / 100 ))
+          cp textures/background.png /tmp/icon_source.png
+          sips --cropToHeightWidth ${CROP_SIZE} ${CROP_SIZE} /tmp/icon_source.png --out /tmp/icon_cropped.png
+
+          sips -z   16   16 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_16x16.png"
+          sips -z   32   32 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_16x16@2x.png"
+          sips -z   32   32 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_32x32.png"
+          sips -z   64   64 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_32x32@2x.png"
+          sips -z  128  128 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_128x128.png"
+          sips -z  256  256 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_128x128@2x.png"
+          sips -z  256  256 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_256x256.png"
+          sips -z  512  512 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_256x256@2x.png"
+          sips -z  512  512 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_512x512.png"
+          sips -z 1024 1024 /tmp/icon_cropped.png --out "${ICONSET_DIR}/icon_512x512@2x.png"
 
           iconutil -c icns "${ICONSET_DIR}" -o "${APP_DIR}/Contents/Resources/blocks.icns"
 
           # 4. Create Info.plist
-          cat > "${APP_DIR}/Contents/Info.plist" <<'EOF'
+          cat > "${APP_DIR}/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -151,7 +158,7 @@ jobs:
               <true/>
           </dict>
           </plist>
-          EOF
+          PLIST
 
           # 5. Ad-hoc code sign (eliminates the Gatekeeper "unverified" warning)
           codesign --force --deep -s - "${APP_DIR}"

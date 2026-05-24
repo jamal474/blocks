@@ -60,11 +60,22 @@ void Game::loadResources() {
     m_scoreText.setOutlineColor(sf::Color::Black);
     m_scoreText.setOutlineThickness(2.0f);
 
-    // ── Set window icon from the embedded background image ──
+    // ── Set window icon from the embedded background image (cropped to building) ──
     sf::Image iconImage;
     if (iconImage.loadFromMemory(ASSET_BACKGROUND_PNG, ASSET_BACKGROUND_PNG_SIZE)) {
-        m_window.setIcon(iconImage.getSize().x, iconImage.getSize().y,
-                         iconImage.getPixelsPtr());
+        auto imgSize = iconImage.getSize();
+        // Crop to a square centered on the building (zoom in)
+        unsigned cropSize = static_cast<unsigned>(imgSize.x * 0.7f);
+        unsigned startX   = (imgSize.x - cropSize) / 2;
+        unsigned startY   = (imgSize.y - cropSize) / 3; // bias upward toward the building
+
+        sf::Image croppedIcon;
+        croppedIcon.create(cropSize, cropSize, sf::Color::Transparent);
+        croppedIcon.copy(iconImage, 0, 0,
+                         sf::IntRect(startX, startY, cropSize, cropSize));
+
+        m_window.setIcon(croppedIcon.getSize().x, croppedIcon.getSize().y,
+                         croppedIcon.getPixelsPtr());
     }
 }
 
