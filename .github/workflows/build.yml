@@ -87,42 +87,99 @@ jobs:
         run: |
           cmake --build --preset ${{ matrix.build_preset }}
 
-      # --- PACKAGE EXECUTABLES TO PRESERVE PERMISSIONS & ASSETS ---
-      - name: Package Executable
+      # --- PACKAGE: macOS .app bundle with code signing ---
+      - name: Package macOS App Bundle
+        if: runner.os == 'macOS'
         shell: bash
         run: |
-          # 1. Define final archive name with version
-          # github.ref_name will be 'v1.0.0' for tags, or the branch name for manual runs
           VERSION_TAG="${{ github.ref_name }}"
-          # Replace any slashes in branch names to prevent folder-creation errors
           VERSION_TAG="${VERSION_TAG//\//-}"
           FINAL_ARCHIVE="blocks-${{ matrix.os_name }}-${VERSION_TAG}.${{ matrix.archive_ext }}"
-          
-          # Export to environment variable for the upload steps
           echo "FINAL_ARCHIVE=$FINAL_ARCHIVE" >> $GITHUB_ENV
-          
-          # 2. Create target directory
-          mkdir -p dist/blocks
-          
-          # 3. Copy built executable and assets
-          cp "build/Release/${{ matrix.artifact_name }}" dist/blocks/
-          cp -r "build/Release/textures" dist/blocks/
-          cp -r "build/Release/fonts" dist/blocks/
-          
+
+          # 1. Create .app bundle structure
+          APP_DIR="dist/City Bloxx.app"
+          mkdir -p "${APP_DIR}/Contents/MacOS"
+          mkdir -p "${APP_DIR}/Contents/Resources"
+
+          # 2. Copy the self-contained executable
+          cp "build/Release/${{ matrix.artifact_name }}" "${APP_DIR}/Contents/MacOS/"
+          chmod +x "${APP_DIR}/Contents/MacOS/${{ matrix.artifact_name }}"
+
+          # 3. Generate .icns from background.png using macOS-native tools
+          ICONSET_DIR="$(mktemp -d)/blocks.iconset"
+          mkdir -p "${ICONSET_DIR}"
+
+          sips -z   16   16 textures/background.png --out "${ICONSET_DIR}/icon_16x16.png"
+          sips -z   32   32 textures/background.png --out "${ICONSET_DIR}/icon_16x16@2x.png"
+          sips -z   32   32 textures/background.png --out "${ICONSET_DIR}/icon_32x32.png"
+          sips -z   64   64 textures/background.png --out "${ICONSET_DIR}/icon_32x32@2x.png"
+          sips -z  128  128 textures/background.png --out "${ICONSET_DIR}/icon_128x128.png"
+          sips -z  256  256 textures/background.png --out "${ICONSET_DIR}/icon_128x128@2x.png"
+          sips -z  256  256 textures/background.png --out "${ICONSET_DIR}/icon_256x256.png"
+          sips -z  512  512 textures/background.png --out "${ICONSET_DIR}/icon_256x256@2x.png"
+          sips -z  512  512 textures/background.png --out "${ICONSET_DIR}/icon_512x512.png"
+          sips -z 1024 1024 textures/background.png --out "${ICONSET_DIR}/icon_512x512@2x.png"
+
+          iconutil -c icns "${ICONSET_DIR}" -o "${APP_DIR}/Contents/Resources/blocks.icns"
+
+          # 4. Create Info.plist
+          cat > "${APP_DIR}/Contents/Info.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>blocks</string>
+              <key>CFBundleIconFile</key>
+              <string>blocks.icns</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.blocks.citybloxx</string>
+              <key>CFBundleName</key>
+              <string>City Bloxx</string>
+              <key>CFBundleDisplayName</key>
+              <string>City Bloxx</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+          # 5. Ad-hoc code sign (eliminates the Gatekeeper "unverified" warning)
+          codesign --force --deep -s - "${APP_DIR}"
+
+          # 6. Create the release archive
           cd dist
-          
-          # 4. Compress the folder
+          zip -r "$FINAL_ARCHIVE" "City Bloxx.app"
+
+      # --- PACKAGE: Windows / Linux (single executable, no external assets) ---
+      - name: Package Executable (Windows / Linux)
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          VERSION_TAG="${{ github.ref_name }}"
+          VERSION_TAG="${VERSION_TAG//\//-}"
+          FINAL_ARCHIVE="blocks-${{ matrix.os_name }}-${VERSION_TAG}.${{ matrix.archive_ext }}"
+          echo "FINAL_ARCHIVE=$FINAL_ARCHIVE" >> $GITHUB_ENV
+
+          mkdir -p dist/blocks
+          cp "build/Release/${{ matrix.artifact_name }}" dist/blocks/
+
+          cd dist
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            # Using Python to create a zip file is extremely cross-platform and reliable under bash on Windows
             python -c "import shutil; shutil.make_archive('blocks', 'zip', '.', 'blocks')"
             mv blocks.zip "$FINAL_ARCHIVE"
           else
             chmod +x "blocks/${{ matrix.artifact_name }}"
-            if [[ "${{ matrix.archive_ext }}" == "zip" ]]; then
-              zip -r "$FINAL_ARCHIVE" blocks
-            else
-              tar -czvf "$FINAL_ARCHIVE" blocks
-            fi
+            tar -czvf "$FINAL_ARCHIVE" blocks
           fi
 
       # --- UPLOAD ARTIFACTS FOR DEBUGGING (Manual/Branch Runs) ---

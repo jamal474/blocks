@@ -1,9 +1,9 @@
 #include "Game.h"
 #include "Constants.h"
+#include "EmbeddedAssets.h"
 #include <iostream>
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
 
 // ── Constructor ─────────────────────────────────────────────────────────────
 Game::Game()
@@ -33,34 +33,39 @@ Game::Game()
 
 // ── Resource Loading ────────────────────────────────────────────────────────
 void Game::loadResources() {
-    std::cout << "Working directory: " << std::filesystem::current_path() << "\n";
+    if (!m_blockTexture.loadFromMemory(ASSET_BLOCK_PNG, ASSET_BLOCK_PNG_SIZE))
+        std::cerr << "Failed to load block texture from embedded data\n";
 
-    if (!m_blockTexture.loadFromFile("textures/block.png"))
-        std::cerr << "Failed to load textures/block.png\n";
-
-    if (!m_hookTexture.loadFromFile("textures/hook.png"))
-        std::cerr << "Failed to load textures/hook.png\n";
+    if (!m_hookTexture.loadFromMemory(ASSET_HOOK_PNG, ASSET_HOOK_PNG_SIZE))
+        std::cerr << "Failed to load hook texture from embedded data\n";
     m_hookTexture.setSmooth(true);
 
-    if (!m_bgTexture.loadFromFile("textures/background.png"))
-        std::cerr << "Failed to load textures/background.png\n";
+    if (!m_bgTexture.loadFromMemory(ASSET_BACKGROUND_PNG, ASSET_BACKGROUND_PNG_SIZE))
+        std::cerr << "Failed to load background texture from embedded data\n";
     m_bgSprite.setTexture(m_bgTexture);
     m_bgSprite.setScale(0.6f, 0.6f);
     m_bgSprite.setPosition(-20.0f, 200.0f);
 
-    if (!m_skyTexture.loadFromFile("textures/sky.jpg"))
-        std::cerr << "Failed to load textures/sky.jpg\n";
+    if (!m_skyTexture.loadFromMemory(ASSET_SKY_JPG, ASSET_SKY_JPG_SIZE))
+        std::cerr << "Failed to load sky texture from embedded data\n";
     m_skySprite.setTexture(m_skyTexture);
     m_skySprite.setScale(0.4f, 0.4f);
 
-    if (!m_font.loadFromFile("fonts/DoodleJump.ttf"))
-        std::cerr << "Failed to load fonts/DoodleJump.ttf\n";
+    if (!m_font.loadFromMemory(ASSET_DOODLEJUMP_TTF, ASSET_DOODLEJUMP_TTF_SIZE))
+        std::cerr << "Failed to load font from embedded data\n";
 
     m_scoreText.setFont(m_font);
     m_scoreText.setCharacterSize(24);
     m_scoreText.setFillColor(sf::Color::White);
     m_scoreText.setOutlineColor(sf::Color::Black);
     m_scoreText.setOutlineThickness(2.0f);
+
+    // ── Set window icon from the embedded background image ──
+    sf::Image iconImage;
+    if (iconImage.loadFromMemory(ASSET_BACKGROUND_PNG, ASSET_BACKGROUND_PNG_SIZE)) {
+        m_window.setIcon(iconImage.getSize().x, iconImage.getSize().y,
+                         iconImage.getPixelsPtr());
+    }
 }
 
 // ── Spawn a new block attached to the crane ─────────────────────────────────
