@@ -1,0 +1,145 @@
+name: Build Blocks Executable
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: blocks.exe
+            os_name: windows
+            archive_ext: zip
+            configure_preset: conan-default
+            build_preset: conan-release
+
+          - os: ubuntu-latest
+            artifact_name: blocks
+            os_name: linux
+            archive_ext: tar.gz
+            configure_preset: conan-release
+            build_preset: conan-release
+          
+          - os: macos-latest 
+            artifact_name: blocks
+            os_name: macos
+            archive_ext: zip
+            configure_preset: conan-release
+            build_preset: conan-release
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      # --- SYSTEM DEPENDENCIES (Linux) ---
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxrandr-dev libxcursor-dev libudev-dev libopenal-dev libflac-dev libvorbis-dev libgl1-mesa-dev libegl1-mesa-dev libasound2-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Conan
+        run: |
+          pip install conan
+
+      - name: Cache Conan packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2/p
+          key: ${{ runner.os }}-conan-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            ${{ runner.os }}-conan-
+
+      - name: Detect Conan Profile
+        run: |
+          conan profile detect --force
+
+      - name: Install Dependencies via Conan
+        run: |
+          conan install . --build=missing -s build_type=Release
+
+      - name: Configure CMake
+        run: |
+          cmake --preset ${{ matrix.configure_preset }}
+
+      - name: Build with CMake
+        run: |
+          cmake --build --preset ${{ matrix.build_preset }}
+
+      # --- PACKAGE EXECUTABLES TO PRESERVE PERMISSIONS & ASSETS ---
+      - name: Package Executable
+        shell: bash
+        run: |
+          # 1. Define final archive name with version
+          # github.ref_name will be 'v1.0.0' for tags, or the branch name for manual runs
+          VERSION_TAG="${{ github.ref_name }}"
+          # Replace any slashes in branch names to prevent folder-creation errors
+          VERSION_TAG="${VERSION_TAG//\//-}"
+          FINAL_ARCHIVE="blocks-${{ matrix.os_name }}-${VERSION_TAG}.${{ matrix.archive_ext }}"
+          
+          # Export to environment variable for the upload steps
+          echo "FINAL_ARCHIVE=$FINAL_ARCHIVE" >> $GITHUB_ENV
+          
+          # 2. Create target directory
+          mkdir -p dist/blocks
+          
+          # 3. Copy built executable and assets
+          cp "build/Release/${{ matrix.artifact_name }}" dist/blocks/
+          cp -r "build/Release/textures" dist/blocks/
+          cp -r "build/Release/fonts" dist/blocks/
+          
+          cd dist
+          
+          # 4. Compress the folder
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Using Python to create a zip file is extremely cross-platform and reliable under bash on Windows
+            python -c "import shutil; shutil.make_archive('blocks', 'zip', '.', 'blocks')"
+            mv blocks.zip "$FINAL_ARCHIVE"
+          else
+            chmod +x "blocks/${{ matrix.artifact_name }}"
+            if [[ "${{ matrix.archive_ext }}" == "zip" ]]; then
+              zip -r "$FINAL_ARCHIVE" blocks
+            else
+              tar -czvf "$FINAL_ARCHIVE" blocks
+            fi
+          fi
+
+      # --- UPLOAD ARTIFACTS FOR DEBUGGING (Manual/Branch Runs) ---
+      - name: Upload Debug Artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blocks-${{ runner.os }}
+          path: dist/${{ env.FINAL_ARCHIVE }}
+
+      # --- CREATE OFFICIAL RELEASE (Tag Pushes Only) ---
+      - name: Rename and Upload Artifacts (Release)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.FINAL_ARCHIVE }}
+          name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
