@@ -1,4 +1,4 @@
-# 🏙️ City Bloxx (Physics Tower Builder)
+## City Bloxx (Physics Tower Builder)
 
 A physics-based 2D tower building game written in modern C++20 using the **SFML** graphics library and **Box2D** physics engine. Challenge your reflexes and timing to stack building blocks as high as you can while fighting swinging pendulum physics, gravity, and structural instability!
 
@@ -14,11 +14,11 @@ A physics-based 2D tower building game written in modern C++20 using the **SFML*
 
 ## 🛠️ Technology Stack
 
-The project leverages a robust and lightweight C++ game development ecosystem:M
+The project leverages a robust and lightweight C++ game development ecosystem:
 
 *   **Language**: C++20 standard.
 *   **Graphics & Windowing**: [SFML (Simple and Fast Multimedia Library) 2.6.2](https://www.sfml-dev.org/) — manages the application window, handles keyboard input, renders textures, and displays text in screen space.
-*   **Physics Simulation**: [Box2D 2.4.2](https://box2d.org/) — drives all the structural collisions, pendulum swinging mechanics, mass density, friction coefficients, and toppling gravity.
+*   **Physics Simulation**: [Box2D 2.4.2](https://box2d.org/) — drives the falling block, landing impacts, and the final collapse. The crane swing and the tower sway are scripted rather than solved, for motion that is smooth and tunable by design.
 *   **Dependency Management**: [Conan 2.x](https://conan.io/) — automatically manages and resolves dependencies for SFML, Box2D, and their transitive requirements in a cross-platform manner.
 *   **Build Pipeline**: [CMake 3.28+](https://cmake.org/) — configures the compilation targets and automates binary asset compilation.
 *   **Platform Integration**:
@@ -46,7 +46,7 @@ flowchart TB
     end
 
     subgraph Entities["Game Entities"]
-        Crane["Crane Pendulum (Revolute Joint)"]
+        Crane["Crane (Scripted Pendulum)"]
         Tower["Tower (Block Stack Manager)"]
         Block["Block (b2Body + Sprite)"]
     end
@@ -57,23 +57,24 @@ flowchart TB
     end
 
     %% Flows & Interactions
-    Space -->|Destroys b2WeldJoint| Crane
+    Space -->|Releases block onto its arc| Crane
     Esc -->|Closes Window| SFML
 
-    Game -->|1. Step Physics Fixed DT| PhysicsWorld
-    Game -->|2. Swing Pendulum| Crane
-    Game -->|3. Sync & Spawn Blocks| Tower
-    Game -->|4. Update Viewport Tracking| Camera
+    Game -->|1. Integrate Pendulum| Crane
+    Game -->|2. Drive Tower Sway| Tower
+    Game -->|3. Step Physics Fixed DT| PhysicsWorld
+    Game -->|4. Resolve Landing & Score| Tower
+    Game -->|5. Update Viewport Tracking| Camera
 
     PhysicsWorld -->|Calculates forces / collisions| Block
-    Crane -->|Welds active block| Block
+    Crane -->|Carries active block on its arc| Block
     Tower -->|Tracks active & settled| Block
 
     Camera -->|Frustum culling bounds| Block
-    Camera -->|Translates static anchor Y| Crane
+    Camera -->|Moves pendulum pivot| Crane
 
-    Tower -->|Computes horizontal alignment| HUD
-    Tower -->|Disables distant bodies| PhysicsWorld
+    Tower -->|Alignment, score & sway meter| HUD
+    Tower -->|Retires distant bodies| PhysicsWorld
 
     Block -->|Renders visible bodies| SFML
     HUD -->|Draws overlay in screen-space| SFML
@@ -94,34 +95,65 @@ flowchart TB
 
 ## ⚙️ Game Mechanics & Algorithms
 
-### 📊 Satisfying Score & Alignment System
-The score for each successfully dropped block is computed based on how precisely it aligns horizontally with the block immediately beneath it.
+### 🏗️ The crane is a scripted pendulum, not a jointed body
+The crane deliberately uses **no Box2D bodies at all**. Driving it with a revolute
+joint meant the solver fought every camera scroll and every hand-set velocity,
+which is what made the old swing erratic. Instead the arm integrates the real
+pendulum equation
 
-$$Score = (1 - offset^2) \times 100$$
+$$\ddot{\theta} = -\frac{g}{L}\sin\theta$$
 
-Where $offset$ is calculated as:
+with a **symplectic (semi-implicit Euler) integrator** at a fixed timestep. That
+integrator is energy-stable, so the swing neither decays nor winds itself up. A
+light energy correction each step pins the amplitude exactly:
 
-$$offset = \frac{|\Delta X|}{\text{Block Width}}$$
+$$e = \tfrac{1}{2}L\omega^{2} + g\,(1 - \cos\theta)$$
 
-*   **Perfect Placement Bonus**: If the offset is under $5\%$ ($< 2.5$ pixels), the player is rewarded with a perfect score of flat $100$.
-*   **Quadratic Penalty**: The score drops quadratically as offset increases. If the offset is $1.0$ or higher (a complete miss), the block scores $0$ points and will likely fall off the tower, leading to a Game Over.
+The hook's pose *and its analytic velocity* are published, so the block riding
+the rope sits exactly on the arc and is released with precisely the tangential
+momentum it already had — the throw continues the arc instead of jumping.
 
-### ❄️ Distant Body Freezing (CPU Optimisation)
-As the tower grows higher, the physics simulation could quickly become a CPU bottleneck due to continuous collision checks between dozens of stacked blocks. To maintain a smooth 60 FPS, City Bloxx implements an automated freezing routine:
-*   Once the tower exceeds 10 blocks, any blocks residing lower than $800$ pixels below the camera's upper margin are frozen using `m_body->SetEnabled(false)`.
-*   This temporarily removes them from Box2D collision sweeps while preserving their final visual positions on screen, ensuring near-constant CPU performance regardless of tower height.
+While attached the block is a **kinematic** body that collides with nothing; on
+release it becomes **dynamic with CCD** (`SetBullet`) so it can never tunnel
+through the tower. Blocks tilt with the rope, as a rigid pendulum would.
 
----
+### 🏢 The tower is a driven swaying column
+Settled blocks are kinematic and are written every fixed step to
 
-## ⚡ Binary Asset Embedding
+$$x(h) = x_{base}(h) + A\,h^{k}\sin(\phi)$$
 
-To prevent file loading errors and ensure a single standalone executable, the project compiles raw game assets directly into the C++ binary:
-1.  A custom Python script `cmake/bin2c.py` takes raw textures (`.png`, `.jpg`) and fonts (`.ttf`) and converts them into memory-aligned C++ source files containing `const unsigned char` byte arrays.
-2.  CMake automatically builds these source files and links them to the executable.
-3.  The game loads files at runtime directly from memory using SFML's memory loading APIs:
-    ```cpp
-    m_blockTexture.loadFromMemory(ASSET_BLOCK_PNG, ASSET_BLOCK_PNG_SIZE);
-    ```
+where $h$ is a block's normalised height and $k$ bends the profile like a
+cantilever — the top sways far, the base barely at all. Each block is also
+tilted along the tangent of the bent column, so the building reads as one
+flexing structure rather than a sliding pile. Taller buildings sway further and
+more slowly, exactly as real ones do.
+
+### 📊 Accuracy drives the sway (the core feedback loop)
+The sway amplitude $A$ is driven by **how well you stack**. On each landing the
+offset between the new block and the one below,
+$offset = |\Delta x| / \text{blockWidth}$, updates an *instability* value:
+
+*   **A near-perfect drop pays the building back**, visibly calming it down.
+*   **A sloppy drop winds it up.** The response is curved, not linear
+    ($\propto offset^{1.6}$), so a slightly-off drop barely registers while a
+    genuinely bad one shakes the building — and no single mistake is fatal.
+*   **At instability 1.0 the building goes over** and the run ends.
+
+The `SWAY` meter in the HUD shows this value, because it is the thing the whole
+game hangs on.
+
+### 🧲 "Click upright" landings
+When a block touches down it is snapped square against the block below by an
+amount that falls off with the miss:
+
+*   $offset = 0$ — snapped dead centre and perfectly level.
+*   $offset \ge$ `STACK_SNAP_LIMIT` — left exactly where it landed, leaning the
+    column and adding lasting drift.
+*   $offset >$ `STACK_FAIL_OFFSET` — too little overlap to hold: the block misses
+    and the building collapses.
+
+Collapse is the one place full rigid-body physics takes over: every block turns
+dynamic and the tower genuinely topples.
 
 ---
 
@@ -151,4 +183,5 @@ chmod +x build.sh
 ## ⌨️ Controls
 
 *   `Spacebar` — Releases the current block from the swinging crane hook.
+*   `Spacebar` / `R` / `Enter` — Rebuilds after a collapse.
 *   `Escape` — Exits the application immediately.

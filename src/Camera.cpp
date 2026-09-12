@@ -1,33 +1,50 @@
 #include "Camera.h"
 #include "Constants.h"
-#include <algorithm>
+#include "BlockLogger.h"
 
 void Camera::init(float windowWidth, float windowHeight) {
     m_viewWidth  = windowWidth;
     m_viewHeight = windowHeight;
-    m_currentCenter = { windowWidth / 2.0f, windowHeight / 2.0f };
+    m_centerX    = windowWidth * 0.5f;
     m_view.setSize(windowWidth, windowHeight);
-    m_view.setCenter(m_currentCenter);
+    reset(PLATFORM_Y - PLATFORM_HEIGHT * 0.5f);
+    LOG_INFO("Camera initialised (%.0fx%.0f)", windowWidth, windowHeight);
+}
+
+void Camera::reset(float towerTopYPx) {
+    // Snap to the same framing the camera would settle into. Without this the
+    // first block falls the height of the screen while every later block falls
+    // a few dozen pixels - the opening of the game played nothing like the
+    // rest of it.
+    m_centerY = m_prevCenterY =
+        towerTopYPx + m_viewHeight * (0.5f - CAMERA_TOP_MARGIN);
+    m_view.setCenter(m_centerX, m_centerY);
 }
 
 void Camera::update(float towerTopYPx, float dt) {
-    // Target: keep the tower top in the upper portion of the screen
-    float targetY = towerTopYPx + m_viewHeight * (0.5f - CAMERA_TOP_MARGIN);
+    const float targetY = towerTopYPx + m_viewHeight * (0.5f - CAMERA_TOP_MARGIN);
 
-    // Only scroll up, never back down
-    if (targetY < m_currentCenter.y) {
-        // Smooth exponential interpolation (lerp)
-        m_currentCenter.y += (targetY - m_currentCenter.y) * CAMERA_LERP_SPEED * dt;
+    // Only ever climb - the tower never gets shorter.
+    if (targetY < m_centerY) {
+        m_centerY += (targetY - m_centerY) * smoothFactor(CAMERA_SMOOTH_RATE, dt);
     }
-
-    m_view.setCenter(m_currentCenter);
 }
 
-sf::FloatRect Camera::getViewBounds() const {
-    sf::Vector2f topLeft = m_currentCenter - sf::Vector2f(m_viewWidth, m_viewHeight) / 2.0f;
-    sf::FloatRect bounds(topLeft, { m_viewWidth, m_viewHeight });
-    // Expand for culling padding
-    bounds.top    -= CULL_PADDING;
-    bounds.height += 2.0f * CULL_PADDING;
-    return bounds;
+float Camera::getRenderTopY(float alpha) const {
+    const float c = m_prevCenterY + (m_centerY - m_prevCenterY) * alpha;
+    return c - m_viewHeight * 0.5f;
+}
+
+const sf::View& Camera::getView(float alpha) {
+    const float c = m_prevCenterY + (m_centerY - m_prevCenterY) * alpha;
+    m_view.setCenter(m_centerX, c);
+    return m_view;
+}
+
+sf::FloatRect Camera::getViewBounds(float alpha) const {
+    const float c = m_prevCenterY + (m_centerY - m_prevCenterY) * alpha;
+    return sf::FloatRect(m_centerX - m_viewWidth * 0.5f - CULL_PADDING,
+                         c - m_viewHeight * 0.5f - CULL_PADDING,
+                         m_viewWidth  + 2.0f * CULL_PADDING,
+                         m_viewHeight + 2.0f * CULL_PADDING);
 }

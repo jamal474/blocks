@@ -16,6 +16,7 @@ set(SOURCES
     src/Crane.cpp
     src/Tower.cpp
     src/Camera.cpp
+    src/BlockLogger.cpp
 )
 
 add_executable(blocks ${SOURCES})
@@ -36,7 +37,6 @@ set(ASSETS
     "textures/block.png:ASSET_BLOCK_PNG"
     "textures/hook.png:ASSET_HOOK_PNG"
     "textures/background.png:ASSET_BACKGROUND_PNG"
-    "textures/sky.jpg:ASSET_SKY_JPG"
     "fonts/DoodleJump.ttf:ASSET_DOODLEJUMP_TTF"
 )
 
@@ -107,3 +107,24 @@ if(APPLE)
     )
 endif()
 
+
+# -- Optional test binaries ---------------------------------------------------
+# Headless checks for the pendulum maths and a cost-vs-height benchmark.
+#   cmake --preset conan-release -DBLOCKS_BUILD_TESTS=ON
+option(BLOCKS_BUILD_TESTS "Build the headless simulation tests" OFF)
+
+if(BLOCKS_BUILD_TESTS)
+    set(TEST_SUPPORT
+        src/Crane.cpp src/Tower.cpp src/Block.cpp
+        src/PhysicsWorld.cpp src/BlockLogger.cpp)
+
+    foreach(TEST_NAME test_sim test_perf)
+        add_executable(${TEST_NAME} tests/${TEST_NAME}.cpp ${TEST_SUPPORT})
+        target_include_directories(${TEST_NAME}
+            PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include "${EMBEDDED_ASSETS_DIR}")
+        target_link_libraries(${TEST_NAME} PRIVATE sfml-graphics box2d::box2d)
+    endforeach()
+
+    enable_testing()
+    add_test(NAME simulation COMMAND test_sim)
+endif()
